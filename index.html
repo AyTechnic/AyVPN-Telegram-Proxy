@@ -385,7 +385,7 @@
             <div class="mt-8 pt-6 border-t border-gray-800/50 text-sm">
                 <p class="flex items-center justify-center gap-x-2 flex-wrap">
                     <span>&copy; تمامی حقوق مادی و معنوی توسط کمپانی آی تکنیک محفوظ می باشد.</span>
-                    <span class="bg-sky-500/10 text-sky-400 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-sky-500/20">نسخه 1.1</span>
+                    <span class="bg-sky-500/10 text-sky-400 text-xs font-semibold px-2.5 py-0.5 rounded-full border border-sky-500/20">نسخه 1.2</span>
                 </p>
             </div>
         </div>
@@ -426,24 +426,41 @@
 
         // Helper function to parse a single proxy line from the new text source
         function parseProxyLine(line) {
-            // Example line: https://t.me/proxy?server=example.com&port=443&secret=abc123
-            const urlPattern = /^https?:\/\/t\.me\/proxy\?(.+)$/i;
-            const match = line.match(urlPattern);
-            if (!match) return null;
-
-            const params = new URLSearchParams(match[1]);
-            let server = params.get('server');
-            let port = params.get('port');
-            let secret = params.get('secret');
-
-            if (!server || !port || !secret) return null;
-            
-            // Clean up server value: remove possible trailing dots or spaces
-            server = server.replace(/\.+$/, '').trim();
-            port = port.trim();
-            secret = secret.trim();
-
-            return { server, port, secret };
+            try {
+                // First, decode HTML entities like &amp; to &
+                let decodedLine = line.replace(/&amp;/g, '&');
+                
+                // Extract the URL part (from https:// to end of line)
+                const urlMatch = decodedLine.match(/(https?:\/\/t\.me\/proxy\?[^\s]+)/i);
+                if (!urlMatch) return null;
+                
+                let url = urlMatch[1];
+                
+                // Extract parameters from URL
+                const serverMatch = url.match(/[?&]server=([^&]+)/);
+                const portMatch = url.match(/[?&]port=([^&]+)/);
+                const secretMatch = url.match(/[?&]secret=([^&]+)/);
+                
+                if (!serverMatch || !portMatch || !secretMatch) return null;
+                
+                let server = decodeURIComponent(serverMatch[1]);
+                let port = decodeURIComponent(portMatch[1]);
+                let secret = decodeURIComponent(secretMatch[1]);
+                
+                // Clean up server value
+                server = server.replace(/\.+$/, '').trim();
+                port = port.trim();
+                secret = secret.trim();
+                
+                // Validate
+                if (!server || !port || !secret) return null;
+                if (isNaN(port) && !/^\d+$/.test(port)) return null;
+                
+                return { server, port, secret };
+            } catch (e) {
+                console.error("Error parsing line:", line, e);
+                return null;
+            }
         }
 
         const loadProxies = async () => {
@@ -460,22 +477,26 @@
                 const lines = textData.split(/\r?\n/);
                 const proxiesData = [];
                 
+                console.log("Total lines received:", lines.length);
+                
                 lines.forEach((line, idx) => {
                     // Ignore empty lines
                     if (!line.trim()) return;
                     const parsed = parseProxyLine(line.trim());
                     if (parsed) {
                         proxiesData.push({
-                            id: idx,
+                            id: proxiesData.length, // Use incremental ID
                             server: parsed.server,
                             port: parsed.port,
                             secret: parsed.secret,
-                            country: "🌍 نامشخص", // No country info in the new source
+                            country: "🌍 نامشخص",
                             ping: null,
                             status: 'unknown'
                         });
                     }
                 });
+
+                console.log("Valid proxies parsed:", proxiesData.length);
 
                 if (proxiesData.length === 0) {
                     throw new Error("No valid proxies found in the source.");
@@ -504,7 +525,8 @@
         const renderProxies = () => {
             elements.proxyList.innerHTML = '';
             if (visibleProxies.length === 0 && !isLoading) {
-                elements.noResults.classList.remove('hidden'); return;
+                elements.noResults.classList.remove('hidden');
+                return;
             }
             elements.noResults.classList.add('hidden');
 
@@ -637,7 +659,8 @@
 
         const updateCounts = () => {
             elements.proxyCount.textContent = allProxies.length;
-            elements.activeCount.textContent = allProxies.filter(p => p.status === 'good').length;
+            const activeCount = allProxies.filter(p => p.status === 'good').length;
+            elements.activeCount.textContent = activeCount;
         };
 
         const loadMoreProxies = () => {
@@ -670,8 +693,56 @@
             }, 4000);
         };
 
-        // ===== New Epic Welcome Modal Logic =====
+        // ===== Welcome Modal Logic =====
         const welcomeModal = document.getElementById('welcomeModal');
         const closeWelcomeModalBtn = document.getElementById('closeWelcomeModal');
 
-       
+        const showWelcomeModal = () => {
+            if (sessionStorage.getItem('welcomeModalSeen')) {
+                return;
+            }
+            if (welcomeModal) {
+                welcomeModal.classList.remove('hidden');
+            }
+        };
+
+        const hideWelcomeModal = () => {
+            if (welcomeModal) {
+                const content = welcomeModal.querySelector('.welcome-modal-content');
+                welcomeModal.style.opacity = '0';
+                if(content) content.style.transform = 'scale(0.9)';
+                
+                const onTransitionEnd = () => {
+                    welcomeModal.classList.add('hidden');
+                    welcomeModal.style.opacity = '';
+                    if(content) content.style.transform = '';
+                    welcomeModal.removeEventListener('transitionend', onTransitionEnd);
+                };
+                welcomeModal.addEventListener('transitionend', onTransitionEnd);
+            }
+            sessionStorage.setItem('welcomeModalSeen', 'true');
+        };
+
+        if (closeWelcomeModalBtn) {
+            closeWelcomeModalBtn.addEventListener('click', hideWelcomeModal);
+        }
+
+        if (welcomeModal) {
+            welcomeModal.addEventListener('click', (e) => {
+                if (e.target === welcomeModal) {
+                    hideWelcomeModal();
+                }
+            });
+        }
+
+        elements.refreshBtn.addEventListener('click', loadProxies);
+        elements.testAllBtn.addEventListener('click', testAllProxies);
+        elements.loadMoreBtn.addEventListener('click', loadMoreProxies);
+
+        window.addEventListener('load', () => {
+            loadProxies();
+            setTimeout(showWelcomeModal, 700);
+        });
+    </script>
+</body>
+</html>
